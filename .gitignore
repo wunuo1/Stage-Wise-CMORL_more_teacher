@@ -1,14 +1,2 @@
-*.ipynb
-*.pkl
-*.pt
-*.pyc
-*.png
-*.sh
-.env
-args.txt
-
-__pycache__
-wandb
-model
-results
-.vscode
+results/
+wandb/

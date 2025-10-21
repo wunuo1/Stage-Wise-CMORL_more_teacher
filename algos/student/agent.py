@@ -1,4 +1,5 @@
 from algos.common.actor_gaussian import ActorGaussian as Actor
+from algos.common.actor_gaussian import ActorGaussianWrapper
 from utils import cprint
 
 from .storage import ReplayBuffer
@@ -7,6 +8,7 @@ from .normalizer import ObsRMS
 import numpy as np
 import torch
 import os
+import time
 
 EPS = 1e-8
 
@@ -60,13 +62,26 @@ class Agent:
         self.actor.updateActionDist(norm_obs_tensor, epsilon_tensor)
         _, unnorm_action_tensor = self.actor.sample(deterministic)
         return unnorm_action_tensor
+    
+    def export_onnx(self, obs_tensor):
+        actor_mean = ActorGaussianWrapper(self.actor).eval()
+        torch.onnx.export(
+            actor_mean,
+            obs_tensor,
+            "actor_mean.onnx",
+            input_names=["state"],
+            output_names=["mean"],
+            opset_version=16,
+        )
+
+
 
     def step(self, obs_tensor, actions_tensor):
         self.replay_buffer.addTransition(obs_tensor, actions_tensor)
     
     def copyObsRMS(self, obs_rms):
-        self.obs_rms.mean[:] = obs_rms.mean
-        self.obs_rms.var[:] = obs_rms.var
+        self.obs_rms.mean[:-2] = obs_rms.mean
+        self.obs_rms.var[:-2] = obs_rms.var
         self.obs_rms.upgrade()
 
     def readyToTrain(self):

@@ -40,21 +40,38 @@ def getParser():
     parser.add_argument('--comment', type=str, default=None, help='wandb comment saved in run name.')
     return parser
 
-def train(args, task_cfg, algo_cfg):
+def train(args, args1, args2, task_cfg, algo_cfg, task_cfg1, algo_cfg1, task_cfg2, algo_cfg2):
     # set seed
     setSeed(args.seed)
 
     # backup configurations
     backupFiles(f"{args.save_dir}/backup", task_cfg['backup_files'], algo_cfg['backup_files'])
-
+    print("22222222222")
     # create environments
     env_fn = lambda: task_dict[task_cfg['name']](
         cfg=task_cfg, rl_device=args.device_name, sim_device=args.device_name, 
         graphics_device_id=0, headless=(not args.render), 
         virtual_screen_capture=False, force_render=args.render
     )
+    # print("333333333333")
+    # env_fn1 = lambda: task_dict[task_cfg1['name']](
+    #     cfg=task_cfg1, rl_device=args.device_name, sim_device=args.device_name, 
+    #     graphics_device_id=0, headless=(not args.render), 
+    #     virtual_screen_capture=False, force_render=args.render
+    # )
+    # env_fn2 = lambda: task_dict[task_cfg2['name']](
+    #     cfg=task_cfg2, rl_device=args.device_name, sim_device=args.device_name, 
+    #     graphics_device_id=0, headless=(not args.render), 
+    #     virtual_screen_capture=False, force_render=args.render
+    # )
+    
     vec_env = EnvWrapper(env_fn)
-
+    # print("111111111111")
+    # vec_env1 = EnvWrapper(env_fn)
+    # print("=================")
+    # vec_env2 = EnvWrapper(env_fn2)
+    
+    
     # set arguments
     args.device = vec_env.unwrapped.rl_device
     args.n_envs = vec_env.unwrapped.num_envs
@@ -83,26 +100,49 @@ def train(args, task_cfg, algo_cfg):
     for key in algo_cfg.keys():
         agent_args.__dict__[key] = algo_cfg[key]
     agent = algo_dict[args.algo_name.lower()](agent_args)
-    initial_step = agent.load(args.model_num)
+    initial_step = agent.load(args.model_num)    
 
     # declare teacher
-    teacher_args = deepcopy(args)
-    teacher_args.seed = algo_cfg['teacher']['seed']
-    teacher_args.algo_name = algo_cfg['teacher']['algo_name']
-    # teacher_args.model_num = algo_cfg['teacher']['model_num']
-    teacher_args.model_num = 100000000
-    teacher_args.name = f"{(teacher_args.task_name.lower())}_{(teacher_args.algo_name.lower())}"
-    teacher_args.save_dir = f"results/{teacher_args.name}/seed_{teacher_args.seed}"
-    backup_file_name = glob.glob(f"{teacher_args.save_dir}/backup/algo/*.yaml")[0]
+    args.n_envs = args.n_envs // 2
+    each_teacher_n_envs =  args.n_envs
+
+    teacher_args1 = deepcopy(args)
+    teacher_args1.seed = algo_cfg['teacher']['seed']
+    teacher_args1.algo_name = algo_cfg['teacher']['algo_name']
+    teacher_args1.model_num = 100000000
+    teacher_args1.name = f"go1backflip_{(teacher_args1.algo_name.lower())}"
+    teacher_args1.save_dir = f"results/{teacher_args1.name}/seed_{teacher_args1.seed}"
+    backup_file_name = glob.glob(f"{teacher_args1.save_dir}/backup/algo/*.yaml")[0]
     with open(backup_file_name, 'r') as f:
         teacher_algo_cfg = YAML().load(f)
     for key in teacher_algo_cfg.keys():
-        teacher_args.__dict__[key] = teacher_algo_cfg[key]
-    teacher_args.obs_dim = vec_env.unwrapped.raw_obs_dim * teacher_args.history_len
-    teacher_agent = algo_dict[teacher_args.algo_name.lower()](teacher_args)
-    assert teacher_agent.load(teacher_args.model_num) != 0
+        teacher_args1.__dict__[key] = teacher_algo_cfg[key]
+
+    teacher_args1.obs_dim = (vec_env.unwrapped.raw_obs_dim - 2) * teacher_args1.history_len
+
+    teacher_args2 = deepcopy(args)
+    teacher_args2.seed = algo_cfg['teacher']['seed']
+    teacher_args2.algo_name = algo_cfg['teacher']['algo_name']
+    teacher_args2.model_num = 100000000
+    teacher_args2.name = f"go1sideflip_{(teacher_args2.algo_name.lower())}"
+    teacher_args2.save_dir = f"results/{teacher_args2.name}/seed_{teacher_args2.seed}"
+    backup_file_name = glob.glob(f"{teacher_args2.save_dir}/backup/algo/*.yaml")[0]
+    with open(backup_file_name, 'r') as f:
+        teacher_algo_cfg = YAML().load(f)
+    for key in teacher_algo_cfg.keys():
+        teacher_args2.__dict__[key] = teacher_algo_cfg[key]
+        
+    teacher_args2.obs_dim = (vec_env.unwrapped.raw_obs_dim - 2) * teacher_args2.history_len
+
+    teacher_agent1 = algo_dict[teacher_args1.algo_name.lower()](teacher_args1)
+    assert teacher_agent1.load(teacher_args1.model_num) != 0
+    teacher_agent2 = algo_dict[teacher_args2.algo_name.lower()](teacher_args2)
+    assert teacher_agent2.load(teacher_args2.model_num) != 0
+
     # copy teacher's obs_rms to student
-    agent.copyObsRMS(teacher_agent.obs_rms)
+    agent.copyObsRMS(teacher_agent1.obs_rms)
+
+    args.n_envs = args.n_envs * 2
 
     # wandb
     if args.wandb:
@@ -139,7 +179,6 @@ def train(args, task_cfg, algo_cfg):
         obs_tensor, states_tensor = vec_env.reset()
         stages_tensor = states_tensor[:, -args.num_stages:]
         states_tensor = states_tensor[:, :-args.num_stages]
-
     # start training
     for _ in range(int(initial_step/args.n_steps), int(args.n_total_steps/args.n_steps)):
         start_time = time.time()
@@ -150,7 +189,15 @@ def train(args, task_cfg, algo_cfg):
 
             # ======= collect trajectories & training ======= #
             with torch.no_grad():
-                teacher_actions_tensor = teacher_agent.getAction(obs_tensor[:, -teacher_args.obs_dim:], states_tensor, stages_tensor, True)
+                teacher_obs_tensor = obs_tensor[:, -(vec_env.unwrapped.raw_obs_dim) * teacher_args2.history_len:]
+                teacher_obs_tensor = teacher_obs_tensor.view(teacher_obs_tensor.shape[0], -1, vec_env.unwrapped.raw_obs_dim)
+                teacher_obs_tensor = teacher_obs_tensor[:, :, :vec_env.unwrapped.raw_obs_dim - 2]
+                teacher_obs_tensor = teacher_obs_tensor.reshape(teacher_obs_tensor.shape[0], -1)
+                teacher_actions_tensor1 = teacher_agent1.getAction(teacher_obs_tensor[0:each_teacher_n_envs], states_tensor[0:each_teacher_n_envs], stages_tensor[0:each_teacher_n_envs], True)
+                teacher_actions_tensor2 = teacher_agent2.getAction(teacher_obs_tensor[each_teacher_n_envs:each_teacher_n_envs*2], states_tensor[each_teacher_n_envs:each_teacher_n_envs*2], stages_tensor[each_teacher_n_envs:each_teacher_n_envs*2], True)
+
+                teacher_actions_tensor = torch.cat((teacher_actions_tensor1, teacher_actions_tensor2), dim=0)
+
                 student_actions_tensor = agent.getAction(obs_tensor, True)
                 agent.step(obs_tensor.clone(), teacher_actions_tensor.clone())
 
@@ -158,12 +205,15 @@ def train(args, task_cfg, algo_cfg):
                     actions_tensor = teacher_actions_tensor
                 else:
                     actions_tensor = student_actions_tensor
+
+                # obs_tensor[0:each_teacher_n_envs], states_tensor[0:each_teacher_n_envs], rewards_tensor[0:each_teacher_n_envs], dones1, infos1 = vec_env1.step(actions_tensor[0:each_teacher_n_envs])
+                # obs_tensor[each_teacher_n_envs:each_teacher_n_envs*2], states_tensor[each_teacher_n_envs:each_teacher_n_envs*2], rewards_tensor[each_teacher_n_envs:each_teacher_n_envs*2], dones2, infos2 = vec_env2.step(actions_tensor[each_teacher_n_envs:each_teacher_n_envs*2])
                 obs_tensor, states_tensor, rewards_tensor, dones, infos = vec_env.step(actions_tensor)
                 stages_tensor = states_tensor[:, -args.num_stages:]
                 states_tensor = states_tensor[:, :-args.num_stages]
                 costs_tensor = infos['costs']
                 fails_tensor = infos['fails']
-
+            
             reward_sums_tensor += rewards_tensor
             cost_sums_tensor += costs_tensor
             fail_sums_tensor += fails_tensor
@@ -302,12 +352,6 @@ def test(args, task_cfg, algo_cfg):
             with torch.no_grad():
                 # actions_tensor = agent.getAction(obs_tensor, False)
 
-                # test
-                # filename = f"cal_data_{step_idx:03d}.npy"
-                # file_path = os.path.join("/home/wunuo/Workspace/Stage-Wise-CMORL/cal_data/sideflip", filename)
-                # np_array = np.load(file_path)
-                # obs_tensor = torch.from_numpy(np_array).to('cuda:0')
-
                 actions_tensor = agent.getAction(obs_tensor, True)
                 obs_tensor, states_tensor, rewards_tensor, dones_tensor, infos = vec_env.step(actions_tensor)
                 reward_sums_tensor += rewards_tensor
@@ -327,6 +371,8 @@ def test(args, task_cfg, algo_cfg):
 if __name__ == "__main__":
     parser = getParser()
     args = parser.parse_args()
+    args1 = parser.parse_args()
+    args2 = parser.parse_args()
 
     # ==== processing args ==== #
     # load configuration file
@@ -349,7 +395,25 @@ if __name__ == "__main__":
     args.device_name = device_name
     # ========================= #
 
+    with open("tasks/go1_backflip.yaml", 'r') as f:
+        task_cfg1 = YAML().load(f)
+    with open("algos/student/go1_backflip.yaml", 'r') as f:
+        algo_cfg1 = YAML().load(f)
+    args1.task_name = task_cfg1['name']
+    args1.algo_name = algo_cfg1['name']
+    args1.name = f"{(args1.task_name.lower())}_{(args1.algo_name.lower())}"
+    args1.save_dir = f"results/{args1.name}/seed_{args1.seed}"
+
+    with open("tasks/go1_sideflip.yaml", 'r') as f:
+        task_cfg2 = YAML().load(f)
+    with open("algos/student/go1_sideflip.yaml", 'r') as f:
+        algo_cfg2 = YAML().load(f)
+    args2.task_name = task_cfg2['name']
+    args2.algo_name = algo_cfg2['name']
+    args2.name = f"{(args2.task_name.lower())}_{(args2.algo_name.lower())}"
+    args2.save_dir = f"results/{args2.name}/seed_{args2.seed}"
+
     if args.test:
         test(args, task_cfg, algo_cfg)
     else:
-        train(args, task_cfg, algo_cfg)
+        train(args, args1, args2, task_cfg, algo_cfg, task_cfg1, algo_cfg1, task_cfg2, algo_cfg2)

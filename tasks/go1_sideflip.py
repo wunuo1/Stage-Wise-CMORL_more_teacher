@@ -56,7 +56,7 @@ class Env(VecTask):
             gravity (3), friction (1), restitution (1), stage (5)
         """
         self.cfg = cfg
-        self.raw_obs_dim = 3 + 12*3 + 3
+        self.raw_obs_dim = 3 + 12*3 + 3 + 2
         self.history_len = self.cfg["env"]["history_len"]
         self.cfg['env']['numObservations'] = self.raw_obs_dim * self.history_len
         self.cfg['env']['numStates'] = 3 + 3 + 1 + 4 + 3 + 1 + 1 + 5 
@@ -275,7 +275,8 @@ class Env(VecTask):
         raw_obs_sym_mat[1, 1] = -1.0
         for i in range(3):
             raw_obs_sym_mat[(3+self.num_dofs*(i)):(3+self.num_dofs*(i+1)), (3+self.num_dofs*(i)):(3+self.num_dofs*(i+1))] = self.joint_sym_mat.clone()
-        raw_obs_sym_mat[3+3*self.num_dofs:, 3+3*self.num_dofs:] = torch.eye(3, device=self.device, dtype=torch.float32)
+        # raw_obs_sym_mat[3+3*self.num_dofs:, 3+3*self.num_dofs:] = torch.eye(3, device=self.device, dtype=torch.float32)
+        raw_obs_sym_mat[3+3*self.num_dofs:, 3+3*self.num_dofs:] = torch.eye(5, device=self.device, dtype=torch.float32)
         for i in range(self.history_len):
             self.obs_sym_mat[(self.raw_obs_dim*i):(self.raw_obs_dim*(i+1)), (self.raw_obs_dim*i):(self.raw_obs_dim*(i+1))] = raw_obs_sym_mat.clone()
         self.state_sym_mat = torch.eye(self.num_states - self.num_stages, device=self.device, dtype=torch.float32, requires_grad=False)
@@ -513,13 +514,16 @@ class Env(VecTask):
                 -self.noise_range_dof_vel, self.noise_range_dof_vel, (len(env_ids), self.num_dofs), device=self.device)
 
         # calculate commands
-        commands = torch.zeros((len(env_ids), 3), dtype=torch.float32, device=self.device)
+        # commands = torch.zeros((len(env_ids), 3), dtype=torch.float32, device=self.device)
+        commands = torch.zeros((len(env_ids), 5), dtype=torch.float32, device=self.device)
         masks0 = (self.cmd_time_buf[env_ids] == 0).type(torch.float32)
         masks1 = (1.0 - masks0)*(self.progress_buf[env_ids]*self.control_dt < self.cmd_time_buf[env_ids] + 0.2).type(torch.float32)
         masks2 = (1.0 - masks0)*(1.0 - masks1)
         commands[:, 0] = masks0
         commands[:, 1] = masks1
         commands[:, 2] = masks2
+        commands[:, 3] = 1
+        commands[:, 4] = 0
 
         # reset observation
         obs = jit_compute_observations(

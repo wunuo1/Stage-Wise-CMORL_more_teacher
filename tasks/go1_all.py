@@ -49,7 +49,7 @@ class Env(VecTask):
 
         """
         raw_obs: 
-            base orn (3), joint pos (12), joint vel (12), prev action (12), command (3)
+            base orn (3), joint pos (12), joint vel (12), prev action (12), command (3 + 2)
         observation: raw_obs * history_len
         state: 
             linear velocity (3), angular vel (3), com height (1), foot contact (4), 
@@ -127,6 +127,7 @@ class Env(VecTask):
         self.cost_names = self.cfg["env"]["cost_names"]
         self.stage_names = self.cfg["env"]["stage_names"]
         self.num_rewards = len(self.reward_names)
+        print("self.num_rewards: ", self.num_rewards)
         self.num_costs = len(self.cost_names)
         self.num_stages = len(self.stage_names)
         self.action_smooth_weight = self.cfg["env"]["control"]["action_smooth_weight"]
@@ -289,7 +290,7 @@ class Env(VecTask):
         self.state_sym_mat[9, 10] = 1.0
         self.state_sym_mat[10, 9] = 1.0
         self.state_sym_mat[12, 12] = -1.0
-
+        self.envs_num = 0
 
     def create_sim(self):
         self.sim = super().create_sim(
@@ -434,6 +435,7 @@ class Env(VecTask):
         return super().reset()
 
     def reset_idx(self, env_ids):
+        self.envs_num = len(env_ids)
         # convert env_id's dtype
         env_ids_int32 = env_ids.to(dtype=torch.int32)
 
@@ -514,7 +516,6 @@ class Env(VecTask):
                 -self.noise_range_dof_vel, self.noise_range_dof_vel, (len(env_ids), self.num_dofs), device=self.device)
 
         # calculate commands
-        # commands = torch.zeros((len(env_ids), 3), dtype=torch.float32, device=self.device)
         commands = torch.zeros((len(env_ids), 5), dtype=torch.float32, device=self.device)
         masks0 = (self.cmd_time_buf[env_ids] == 0).type(torch.float32)
         masks1 = (1.0 - masks0)*(self.progress_buf[env_ids]*self.control_dt < self.cmd_time_buf[env_ids] + 0.2).type(torch.float32)
@@ -522,8 +523,11 @@ class Env(VecTask):
         commands[:, 0] = masks0
         commands[:, 1] = masks1
         commands[:, 2] = masks2
-        commands[:, 3] = 0
-        commands[:, 4] = 1
+        commands[0:self.num_envs//2, 3] = 0
+        commands[0:self.num_envs//2, 4] = 1
+        commands[self.num_envs//2:self.num_envs, 3] = 1
+        commands[self.num_envs//2:self.num_envs, 4] = 0
+        
 
         # reset observation
         obs = jit_compute_observations(
@@ -575,6 +579,16 @@ class Env(VecTask):
             self.gym.refresh_dof_state_tensor(self.sim)
 
         # compute observations, rewards, resets, ...
+
+
+        # add
+        # rew_buf_tmp =  torch.zeros((self.num_envs, self.num_rewards), dtype=torch.float32, device=self.device)
+        # self.post_physics_step()
+
+
+
+
+
         self.post_physics_step()
         self.obs_dict["obs"] = torch.clamp(self.obs_buf, -self.clip_obs, self.clip_obs).to(self.rl_device)
         if self.num_states > 0:
@@ -628,18 +642,29 @@ class Env(VecTask):
         body_z = torch_utils.quat_rotate_inverse(self.base_quaternions, self.world_z)
         self.rew_buf[:, 1] =  self.stage_buf[:, 0]*(-torch.arccos(torch.clamp(body_z[:, 2], -1.0, 1.0)))
         self.rew_buf[:, 1] += self.stage_buf[:, 1]*(-torch.arccos(torch.clamp(body_z[:, 2], -1.0, 1.0)))
-        self.rew_buf[:, 1] += self.stage_buf[:, 2]*(-torch.abs(torch.arccos(torch.clamp(body_z[:, 1], -1.0, 1.0)) - np.pi/2.0))
-        self.rew_buf[:, 1] += self.stage_buf[:, 3]*(-torch.abs(torch.arccos(torch.clamp(body_z[:, 1], -1.0, 1.0)) - np.pi/2.0))
+
+        self.rew_buf[0:self.num_envs//2, 1] += self.stage_buf[0:self.num_envs//2, 2]*(-torch.abs(torch.arccos(torch.clamp(body_z[0:self.num_envs//2, 1], -1.0, 1.0)) - np.pi/2.0))
+        self.rew_buf[0:self.num_envs//2, 1] += self.stage_buf[0:self.num_envs//2, 3]*(-torch.abs(torch.arccos(torch.clamp(body_z[0:self.num_envs//2, 1], -1.0, 1.0)) - np.pi/2.0))
+
+        self.rew_buf[self.num_envs//2:self.num_envs, 1] += self.stage_buf[self.num_envs//2:self.num_envs, 2]*(-torch.abs(torch.arccos(torch.clamp(body_z[self.num_envs//2:self.num_envs, 0], -1.0, 1.0)) - np.pi/2.0))
+        self.rew_buf[self.num_envs//2:self.num_envs, 1] += self.stage_buf[self.num_envs//2:self.num_envs, 3]*(-torch.abs(torch.arccos(torch.clamp(body_z[self.num_envs//2:self.num_envs, 0], -1.0, 1.0)) - np.pi/2.0))
+
         self.rew_buf[:, 1] += self.stage_buf[:, 4]*(-torch.arccos(torch.clamp(body_z[:, 2], -1.0, 1.0)))
         # pitch vel
         base_lin_vels = torch_utils.quat_rotate_inverse(self.base_quaternions, self.base_lin_vels)
         base_ang_vels = torch_utils.quat_rotate_inverse(self.base_quaternions, self.base_ang_vels)
         vel_penalty = torch.square(base_lin_vels[:, 0]) + torch.square(base_lin_vels[:, 1]) + torch.square(base_ang_vels[:, 2])
-        base_ang_vel_y = base_ang_vels[:, 1]
+        base_ang_vel_y = base_ang_vels[0:self.num_envs//2, 1]
+        base_ang_vel_x = base_ang_vels[self.num_envs//2:self.num_envs, 0]
         self.rew_buf[:, 2] =  self.stage_buf[:, 0]*(-vel_penalty)
         self.rew_buf[:, 2] += self.stage_buf[:, 1]*(-vel_penalty)
-        self.rew_buf[:, 2] += self.stage_buf[:, 2]*(1.0 - self.is_one_turn_buf)*(-base_ang_vel_y)
-        self.rew_buf[:, 2] += self.stage_buf[:, 3]*(1.0 - self.is_one_turn_buf)*(-base_ang_vel_y)
+
+        self.rew_buf[0:self.num_envs//2, 2] += self.stage_buf[0:self.num_envs//2, 2]*(1.0 - self.is_one_turn_buf[0:self.num_envs//2])*(-base_ang_vel_y)
+        self.rew_buf[0:self.num_envs//2, 2] += self.stage_buf[0:self.num_envs//2, 3]*(1.0 - self.is_one_turn_buf[0:self.num_envs//2])*(-base_ang_vel_y)
+
+        self.rew_buf[self.num_envs//2:self.num_envs, 2] += self.stage_buf[self.num_envs//2:self.num_envs, 2]*(1.0 - self.is_one_turn_buf[self.num_envs//2:self.num_envs])*(base_ang_vel_x)
+        self.rew_buf[self.num_envs//2:self.num_envs, 2] += self.stage_buf[self.num_envs//2:self.num_envs, 3]*(1.0 - self.is_one_turn_buf[self.num_envs//2:self.num_envs])*(base_ang_vel_x)
+
         self.rew_buf[:, 2] += self.stage_buf[:, 4]*(-vel_penalty)
         # energy
         self.rew_buf[:, 3] = -torch.square(self.dof_torques).mean(dim=-1)
@@ -713,13 +738,24 @@ class Env(VecTask):
         self.stage_buf[:, 1] = from0_to1 + (1.0 - from0_to1)*self.stage_buf[:, 1]
 
         # check the robot tumbling
-        self.is_half_turn_buf[:] = torch.logical_or(
-            self.is_half_turn_buf, torch.logical_and(
-                body_z[:, 0] < 0, body_z[:, 2] < 0)).type(torch.long)
-        self.is_one_turn_buf[:] = torch.logical_or(
-            self.is_one_turn_buf, torch.logical_and(
-                self.is_half_turn_buf, torch.logical_and(
-                    body_z[:, 0] >= 0, body_z[:, 2] >= 0))).type(torch.long)
+        self.is_half_turn_buf[0:self.num_envs//2] = torch.logical_or(
+            self.is_half_turn_buf[0:self.num_envs//2], torch.logical_and(
+                body_z[0:self.num_envs//2, 0] < 0, body_z[0:self.num_envs//2, 2] < 0)).type(torch.long)
+        self.is_one_turn_buf[0:self.num_envs//2] = torch.logical_or(
+            self.is_one_turn_buf[0:self.num_envs//2], torch.logical_and(
+                self.is_half_turn_buf[0:self.num_envs//2], torch.logical_and(
+                    body_z[0:self.num_envs//2, 0] >= 0, body_z[0:self.num_envs//2, 2] >= 0))).type(torch.long)
+
+
+
+        self.is_half_turn_buf[self.num_envs//2:self.num_envs] = torch.logical_or(
+            self.is_half_turn_buf[self.num_envs//2:self.num_envs], torch.logical_and(
+                body_z[self.num_envs//2:self.num_envs, 1] < 0, body_z[self.num_envs//2:self.num_envs, 2] < 0)).type(torch.long)
+        self.is_one_turn_buf[self.num_envs//2:self.num_envs] = torch.logical_or(
+            self.is_one_turn_buf[self.num_envs//2:self.num_envs], torch.logical_and(
+                self.is_half_turn_buf[self.num_envs//2:self.num_envs], torch.logical_and(
+                    body_z[self.num_envs//2:self.num_envs, 1] >= 0, body_z[self.num_envs//2:self.num_envs, 2] >= 0))).type(torch.long)
+
         land_masks = torch.logical_and(self.land_time_buf == 0, self.stage_buf[:, 4] == 1).type(torch.float32)
         self.land_time_buf[:] = land_masks*(self.progress_buf*self.control_dt) + (1.0 - land_masks)*self.land_time_buf
         cmd_masks = torch.logical_and(self.cmd_time_buf == 0, self.stage_buf[:, 1] == 1).type(torch.float32)
@@ -752,14 +788,20 @@ class Env(VecTask):
         self.est_base_body_orns[:] = self.lag_imu_buffer[0]
 
         # calculate commands
-        commands = torch.zeros((self.num_envs, 3), dtype=torch.float32, device=self.device)
+        commands = torch.zeros((self.num_envs, 5), dtype=torch.float32, device=self.device)
         masks0 = (self.cmd_time_buf == 0).type(torch.float32)
         masks1 = (1.0 - masks0)*(self.progress_buf*self.control_dt < self.cmd_time_buf + 0.2).type(torch.float32)
         masks2 = (1.0 - masks0)*(1.0 - masks1)
         commands[:, 0] = masks0
         commands[:, 1] = masks1
         commands[:, 2] = masks2
-
+        commands[:, 3] = 1
+        commands[:, 4] = 0
+        # commands[0:self.num_envs//2, 3] = 0
+        # commands[0:self.num_envs//2, 4] = 1
+        # commands[self.num_envs//2:self.num_envs, 3] = 1
+        # commands[self.num_envs//2:self.num_envs, 4] = 0
+        print(commands)
         # update observation buffer
         obs = jit_compute_observations(
             self.est_base_body_orns, self.est_dof_positions, self.est_dof_velocities, 

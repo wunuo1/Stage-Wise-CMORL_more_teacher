@@ -21,7 +21,7 @@ class Agent(AgentBase):
             action_dim=args.action_dim,
             save_dir=args.save_dir,
         )
-
+        print("obs_dim: ", self.obs_dim)
         # for base
         self.stage_dim = args.num_stages
         self.state_dim = args.state_dim
