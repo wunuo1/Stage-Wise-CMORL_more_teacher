@@ -5,7 +5,7 @@ backup_files: [
     'tasks/go1_all.yaml',
     'tasks/go1_all.py',
 ]
-n_total_steps: 100000000
+n_total_steps: 500000000
 
 sim:
     physics_engine: 'physx'
@@ -31,14 +31,19 @@ sim:
 
 env:
     # num_envs: 1000
-    num_envs: 2000
+    num_envs: 3000
     env_spacing: 2.0
     history_len: 10
     enable_camera_sensors: False
 
-    reward_names: [com_pos, body_balance, vel, energy, style]
+    reward_names: [com_pos, body_balance, vel, energy, style, rotation_angle]
+    flip_reward_names: [com_pos, body_balance, vel, energy, style]
+    roll_reward_names: [com_pos, body_balance, rotation_angle, base_vel, energy, style]
     cost_names: [foot_contact, body_contact, joint_pos, joint_vel, joint_torque]
+
+
     stage_names: [stand, sit, jump, air, land]
+    sideroll_stage_names: [stand, sit, roll_half, roll_full, recover]
 
     urdf_asset:
         file: "go1/urdf/go1.urdf"
@@ -59,6 +64,20 @@ env:
         FR_calf_joint: -1.5     # [rad]
         RR_calf_joint: -1.5     # [rad]
 
+    crawled_joint_positions:
+        FL_hip_joint: 0.0       # [rad]
+        RL_hip_joint: 0.0       # [rad]
+        FR_hip_joint: 0.0       # [rad]
+        RR_hip_joint: 0.0       # [rad]
+        FL_thigh_joint: 2.0     # [rad]
+        RL_thigh_joint: 2.0     # [rad]
+        FR_thigh_joint: 2.0     # [rad]
+        RR_thigh_joint: 2.0     # [rad]
+        FL_calf_joint: -2.5     # [rad]
+        RL_calf_joint: -2.5     # [rad]
+        FR_calf_joint: -2.5     # [rad]
+        RR_calf_joint: -2.5     # [rad]
+
     init_base_pose:
         pos: [0.0, 0.0, 0.34]       # x,y,z [m]
         quat: [0.0, 0.0, 0.0, 1.0]   # x,y,z,w [quat]
@@ -78,6 +97,7 @@ env:
 
     learn:
         episode_length_s: 10.0   # [s]
+        sideroll_episode_length_s: 20.0
         ########################
         # for constraint
         hip_joint_limit:
@@ -89,6 +109,17 @@ env:
         calf_joint_limit:
             upper: -0.9
             lower: -2.6
+
+        joint_pos_lower: [
+            -0.2, -1.0, -2.6,
+            -0.8, -1.0, -2.6,
+            -0.2, -1.0, -2.6,
+            -0.8, -1.0, -2.6]
+        joint_pos_upper: [
+            0.8, 4.5, -0.9,
+            0.2, 4.5, -0.9,
+            0.8, 4.5, -0.9,
+            0.2, 4.5, -0.9]
         joint_vel_upper: [
             20.0, 20.0, 20.0, 
             20.0, 20.0, 20.0, 

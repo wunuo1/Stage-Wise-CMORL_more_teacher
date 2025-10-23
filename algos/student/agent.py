@@ -27,7 +27,6 @@ class Agent:
         self.n_envs = args.n_envs
         self.batch_size = args.batch_size
         self.replay_size = args.replay_size
-
         # for normalization
         self.history_len = args.history_len
         self.obs_rms = ObsRMS('obs', self.obs_dim, self.history_len, self.device)
@@ -80,8 +79,8 @@ class Agent:
         self.replay_buffer.addTransition(obs_tensor, actions_tensor)
     
     def copyObsRMS(self, obs_rms):
-        self.obs_rms.mean[:-2] = obs_rms.mean
-        self.obs_rms.var[:-2] = obs_rms.var
+        self.obs_rms.mean[:-3] = obs_rms.mean
+        self.obs_rms.var[:-3] = obs_rms.var
         self.obs_rms.upgrade()
 
     def readyToTrain(self):
