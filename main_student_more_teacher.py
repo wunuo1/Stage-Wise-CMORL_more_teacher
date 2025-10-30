@@ -21,7 +21,7 @@ import time
 import glob
 import os
 
-n_ = 3
+n_ = 4
 
 def getParser():
     parser = argparse.ArgumentParser()
@@ -43,7 +43,7 @@ def getParser():
     parser.add_argument('--comment', type=str, default=None, help='wandb comment saved in run name.')
     return parser
 
-def train(args, args1, args2, arg3, task_cfg, algo_cfg, task_cfg1, algo_cfg1, task_cfg2, algo_cfg2, task_cfg3, algo_cfg3):
+def train(args, args1, args2, args3, args4, task_cfg, algo_cfg, task_cfg1, algo_cfg1, task_cfg2, algo_cfg2, task_cfg3, algo_cfg3, task_cfg4, algo_cfg4):
     # set seed
     setSeed(args.seed)
 
@@ -56,11 +56,6 @@ def train(args, args1, args2, arg3, task_cfg, algo_cfg, task_cfg1, algo_cfg1, ta
         virtual_screen_capture=False, force_render=args.render
     )
     # print("333333333333")
-    # env_fn1 = lambda: task_dict[task_cfg1['name']](
-    #     cfg=task_cfg1, rl_device=args.device_name, sim_device=args.device_name, 
-    #     graphics_device_id=0, headless=(not args.render), 
-    #     virtual_screen_capture=False, force_render=args.render
-    # )
     # env_fn2 = lambda: task_dict[task_cfg2['name']](
     #     cfg=task_cfg2, rl_device=args.device_name, sim_device=args.device_name, 
     #     graphics_device_id=0, headless=(not args.render), 
@@ -69,7 +64,6 @@ def train(args, args1, args2, arg3, task_cfg, algo_cfg, task_cfg1, algo_cfg1, ta
     
     vec_env = EnvWrapper(env_fn)
     # print("111111111111")
-    # vec_env1 = EnvWrapper(env_fn)
     # print("=================")
     # vec_env2 = EnvWrapper(env_fn2)
     
@@ -122,7 +116,8 @@ def train(args, args1, args2, arg3, task_cfg, algo_cfg, task_cfg1, algo_cfg1, ta
     for key in teacher_algo_cfg.keys():
         teacher_args1.__dict__[key] = teacher_algo_cfg[key]
 
-    teacher_args1.obs_dim = (vec_env.unwrapped.raw_obs_dim - n_) * teacher_args1.history_len
+    teacher_args1.obs_dim = (vec_env.unwrapped.raw_obs_dim - n_ - 3) * teacher_args1.history_len
+    teacher_args1.cost_dim = args.cost_dim - 1
 
     teacher_args2 = deepcopy(args)
     teacher_args2.seed = algo_cfg['teacher']['seed']
@@ -136,7 +131,8 @@ def train(args, args1, args2, arg3, task_cfg, algo_cfg, task_cfg1, algo_cfg1, ta
     for key in teacher_algo_cfg.keys():
         teacher_args2.__dict__[key] = teacher_algo_cfg[key]
         
-    teacher_args2.obs_dim = (vec_env.unwrapped.raw_obs_dim - n_) * teacher_args2.history_len
+    teacher_args2.obs_dim = (vec_env.unwrapped.raw_obs_dim - n_ - 3) * teacher_args2.history_len
+    teacher_args2.cost_dim = args.cost_dim - 1
 
     args.reward_names = task_cfg3["env"]["reward_names"]
     args.reward_dim = len(args.reward_names)
@@ -153,10 +149,28 @@ def train(args, args1, args2, arg3, task_cfg, algo_cfg, task_cfg1, algo_cfg1, ta
     for key in teacher_algo_cfg.keys():
         teacher_args3.__dict__[key] = teacher_algo_cfg[key]
         
-    teacher_args3.obs_dim = (vec_env.unwrapped.raw_obs_dim - n_) * teacher_args3.history_len
-
+    teacher_args3.obs_dim = (vec_env.unwrapped.raw_obs_dim - n_ - 3) * teacher_args3.history_len
+    teacher_args3.cost_dim = args.cost_dim - 1
     teacher_args3.preference = [1.0, 1.0, 1.0, 1.0, 0.1, 1.0]
     teacher_args3.sym_con_threshold = 0.2
+
+    teacher_args4 = deepcopy(args)
+    teacher_args4.seed = algo_cfg['teacher']['seed']
+    teacher_args4.algo_name = algo_cfg['teacher']['algo_name']
+    teacher_args4.model_num = 1000000000
+    teacher_args4.name = f"go1twohand_{(teacher_args4.algo_name.lower())}"
+    teacher_args4.save_dir = f"results/{teacher_args4.name}/seed_{teacher_args4.seed}"
+    backup_file_name = glob.glob(f"{teacher_args4.save_dir}/backup/algo/*.yaml")[0]
+    with open(backup_file_name, 'r') as f:
+        teacher_algo_cfg = YAML().load(f)
+    for key in teacher_algo_cfg.keys():
+        teacher_args4.__dict__[key] = teacher_algo_cfg[key]
+        
+    teacher_args4.obs_dim = (vec_env.unwrapped.raw_obs_dim - n_) * teacher_args4.history_len
+    teacher_args4.obs_dim = (vec_env.unwrapped.raw_obs_dim - n_) * teacher_args4.history_len
+    teacher_args4.num_stages = args.num_stages - 2
+
+
 
 
     teacher_agent1 = algo_dict[teacher_args1.algo_name.lower()](teacher_args1)
@@ -165,11 +179,10 @@ def train(args, args1, args2, arg3, task_cfg, algo_cfg, task_cfg1, algo_cfg1, ta
     assert teacher_agent2.load(teacher_args2.model_num) != 0
     teacher_agent3 = algo_dict[teacher_args3.algo_name.lower()](teacher_args3)
     assert teacher_agent3.load(teacher_args3.model_num) != 0
+    teacher_agent4 = algo_dict[teacher_args4.algo_name.lower()](teacher_args4)
+    assert teacher_agent4.load(teacher_args4.model_num) != 0
 
     # copy teacher's obs_rms to student
-    print(teacher_agent1.obs_rms.mean)
-    print(teacher_agent2.obs_rms.mean)
-    print(teacher_agent3.obs_rms.mean)
     agent.copyObsRMS(teacher_agent1.obs_rms)
 
     args.n_envs = args.n_envs * n_
@@ -224,13 +237,17 @@ def train(args, args1, args2, arg3, task_cfg, algo_cfg, task_cfg1, algo_cfg1, ta
             with torch.no_grad():
                 teacher_obs_tensor = obs_tensor[:, -(vec_env.unwrapped.raw_obs_dim) * teacher_args2.history_len:]
                 teacher_obs_tensor = teacher_obs_tensor.view(teacher_obs_tensor.shape[0], -1, vec_env.unwrapped.raw_obs_dim)
-                teacher_obs_tensor = teacher_obs_tensor[:, :, :vec_env.unwrapped.raw_obs_dim - n_]
+                
+                teacher_obs_tensor_twohand = teacher_obs_tensor[:, :, :vec_env.unwrapped.raw_obs_dim - n_]
+                teacher_obs_tensor_twohand = teacher_obs_tensor_twohand.reshape(teacher_obs_tensor_twohand.shape[0], -1)
+                teacher_obs_tensor = teacher_obs_tensor[:, :, 3:vec_env.unwrapped.raw_obs_dim - n_]
                 teacher_obs_tensor = teacher_obs_tensor.reshape(teacher_obs_tensor.shape[0], -1)
                 teacher_actions_tensor1 = teacher_agent1.getAction(teacher_obs_tensor[0:each_teacher_n_envs], states_tensor[0:each_teacher_n_envs], stages_tensor[0:each_teacher_n_envs], True)
                 teacher_actions_tensor2 = teacher_agent2.getAction(teacher_obs_tensor[each_teacher_n_envs:each_teacher_n_envs*2], states_tensor[each_teacher_n_envs:each_teacher_n_envs*2], stages_tensor[each_teacher_n_envs:each_teacher_n_envs*2], True)
                 teacher_actions_tensor3 = teacher_agent3.getAction(teacher_obs_tensor[each_teacher_n_envs*2:each_teacher_n_envs*3], states_tensor[each_teacher_n_envs*2:each_teacher_n_envs*3], stages_tensor[each_teacher_n_envs*2:each_teacher_n_envs*3], True)
+                teacher_actions_tensor4 = teacher_agent4.getAction(teacher_obs_tensor_twohand[each_teacher_n_envs*3:each_teacher_n_envs*4], states_tensor[each_teacher_n_envs*3:each_teacher_n_envs*4], stages_tensor[each_teacher_n_envs*3:each_teacher_n_envs*4, 0:3], True)
 
-                teacher_actions_tensor = torch.cat((teacher_actions_tensor1, teacher_actions_tensor2, teacher_actions_tensor3), dim=0)
+                teacher_actions_tensor = torch.cat((teacher_actions_tensor1, teacher_actions_tensor2, teacher_actions_tensor3, teacher_actions_tensor4), dim=0)
 
                 student_actions_tensor = agent.getAction(obs_tensor, True)
                 agent.step(obs_tensor.clone(), teacher_actions_tensor.clone())
@@ -374,6 +391,7 @@ def test(args, task_cfg, algo_cfg):
         obs_tensor, states_tensor = vec_env.reset(is_uniform_rollout=False)
 
     # agent.export_onnx(obs_tensor)
+    # i = 777
     # start rollouts
     for _ in range(100):
         reward_sums_tensor = torch.zeros((args.n_envs, args.reward_dim), device=args.device, requires_grad=False, dtype=torch.float32)
@@ -383,6 +401,12 @@ def test(args, task_cfg, algo_cfg):
         for step_idx in range(args.max_episode_len):
             with torch.no_grad():
                 # actions_tensor = agent.getAction(obs_tensor, False)
+
+                # save data
+                # np_array = obs_tensor.cpu().numpy()
+                # save_path = os.path.join("/home/wunuo/Workspace/SWC/Stage-Wise-CMORL_more_teacher/cal_data/twohand", f"cal_data_{i:03d}.npy")
+                # np.save(save_path, np_array)
+                # i = i + 1
 
                 actions_tensor = agent.getAction(obs_tensor, True)
                 obs_tensor, states_tensor, rewards_tensor, dones_tensor, infos = vec_env.step(actions_tensor)
@@ -406,6 +430,7 @@ if __name__ == "__main__":
     args1 = parser.parse_args()
     args2 = parser.parse_args()
     args3 = parser.parse_args()
+    args4 = parser.parse_args()
 
     # ==== processing args ==== #
     # load configuration file
@@ -457,7 +482,17 @@ if __name__ == "__main__":
     args3.save_dir = f"results/{args3.name}/seed_{args3.seed}"
 
 
+    with open("tasks/go1_twohand.yaml", 'r') as f:
+        task_cfg4 = YAML().load(f)
+    with open("algos/student/go1_twohand.yaml", 'r') as f:
+        algo_cfg4 = YAML().load(f)
+    args4.task_name = task_cfg4['name']
+    args4.algo_name = algo_cfg4['name']
+    args4.name = f"{(args4.task_name.lower())}_{(args4.algo_name.lower())}"
+    args4.save_dir = f"results/{args4.name}/seed_{args4.seed}"
+
+
     if args.test:
         test(args, task_cfg, algo_cfg)
     else:
-        train(args, args1, args2, args3, task_cfg, algo_cfg, task_cfg1, algo_cfg1, task_cfg2, algo_cfg2, task_cfg3, algo_cfg3)
+        train(args, args1, args2, args3, args4, task_cfg, algo_cfg, task_cfg1, algo_cfg1, task_cfg2, algo_cfg2, task_cfg3, algo_cfg3, task_cfg4, algo_cfg4)

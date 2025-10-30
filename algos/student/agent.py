@@ -79,8 +79,8 @@ class Agent:
         self.replay_buffer.addTransition(obs_tensor, actions_tensor)
     
     def copyObsRMS(self, obs_rms):
-        self.obs_rms.mean[:-3] = obs_rms.mean
-        self.obs_rms.var[:-3] = obs_rms.var
+        self.obs_rms.mean[3:- 4] = obs_rms.mean
+        self.obs_rms.var[3:- 4] = obs_rms.var
         self.obs_rms.upgrade()
 
     def readyToTrain(self):

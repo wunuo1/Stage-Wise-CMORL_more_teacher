@@ -5,7 +5,7 @@ backup_files: [
     'tasks/go1_all.yaml',
     'tasks/go1_all.py',
 ]
-n_total_steps: 500000000
+n_total_steps: 1000000000
 
 sim:
     physics_engine: 'physx'
@@ -31,19 +31,21 @@ sim:
 
 env:
     # num_envs: 1000
-    num_envs: 3000
+    num_envs: 4000
     env_spacing: 2.0
     history_len: 10
     enable_camera_sensors: False
 
-    reward_names: [com_pos, body_balance, vel, energy, style, rotation_angle]
+    reward_names: [com_pos, body_balance, vel, energy, style, rotation_angle, smooth_1st, smooth_2nd]
     flip_reward_names: [com_pos, body_balance, vel, energy, style]
     roll_reward_names: [com_pos, body_balance, rotation_angle, base_vel, energy, style]
-    cost_names: [foot_contact, body_contact, joint_pos, joint_vel, joint_torque]
-
+    twohand_reward_names: [base_vel, style, energy, smooth_1st, smooth_2nd, body_balance]
+    
+    cost_names: [foot_contact, body_contact, joint_pos, joint_vel, joint_torque, base_height]
 
     stage_names: [stand, sit, jump, air, land]
     sideroll_stage_names: [stand, sit, roll_half, roll_full, recover]
+    twohand_stage_names: [stand, tilt, walk]
 
     urdf_asset:
         file: "go1/urdf/go1.urdf"
@@ -131,14 +133,29 @@ env:
             34.0, 34.0, 34.0, 
             34.0, 34.0, 34.0]
         ########################
+
+    target_vel_ranges:
+        lin_x: [-2.0, 2.0]     # min max [m/s]
+        lin_y: [-1.0, 1.0]     # min max [m/s]
+        ang_z: [-2.0, 2.0]     # min max [rad/s]
         
     randomize:
         is_randomized               : false
         rand_period_motor_strength_s: 5.0
         rand_period_gravity_s       : 5.0
+
+        twohand_rand_period_motor_strength_s: 7.0
+        twohand_rand_period_gravity_s       : 7.0
+        rand_period_target_vel_s    : 10.0
+        rand_period_lag_s           : 10.0
+
         rand_range_body_mass        : [-1.0, 3.0]
         rand_range_com_pos_x        : [-0.05, 0.0]
         rand_range_com_pos_y        : [-0.05, 0.0]
+        
+        twohand_rand_range_com_pos_x        : [-0.05, 0.05]
+        twohand_rand_range_com_pos_y        : [-0.05, 0.05]
+
         rand_range_com_pos_z        : [-0.03, 0.03]
         rand_range_init_dof_pos     : [0.5, 1.5]
         rand_range_init_root_vel    : [-0.5, 0.5]
